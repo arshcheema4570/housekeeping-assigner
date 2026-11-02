@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Housekeeping Room Assignment</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<style>
+  :root { --bg:#f4f4f5; --card:#fff; --ink:#18181b; --mut:#71717a; --line:#e4e4e7; --acc:#1d4ed8; --warn:#b45309; --bad:#b91c1c; --ok:#15803d; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); margin: 0; padding: 0 0 60px; }
+  header { background:#111827; color:#fff; padding:14px 20px; position:sticky; top:0; z-index:10; }
+  header h1 { font-size:17px; margin:0; }
+  header p { margin:2px 0 0; font-size:12px; color:#9ca3af; }
+  nav { display:flex; gap:6px; padding:10px 20px; background:#fff; border-bottom:1px solid var(--line); position:sticky; top:62px; z-index:9; flex-wrap:wrap; }
+  nav button { border:1px solid var(--line); background:#fff; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
+  nav button.active { background:var(--acc); color:#fff; border-color:var(--acc); }
+  main { max-width:1080px; margin:0 auto; padding:16px 20px; }
+  .tab { display:none; } .tab.active { display:block; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  label { font-size:13px; } input[type=text], input[type=number], input[type=date], select, textarea { border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px; }
+  textarea { width:100%; min-height:160px; font-family:ui-monospace, monospace; font-size:12px; }
+  .btn { background:var(--acc); color:#fff; border:0; border-radius:8px; padding:9px 16px; font-size:13px; cursor:pointer; }
+  .btn.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .btn.warn { background:var(--warn); }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border:1px solid var(--line); padding:6px 8px; text-align:left; }
+  th { background:#f9fafb; font-size:12px; }
+  .warn { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:13px; margin:8px 0; }
+  .okline { background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:10px 12px; font-size:13px; margin:8px 0; }
+  .hkgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+  .hkcard { border:1px solid var(--line); border-radius:10px; padding:12px; background:#fff; }
+  .hkcard h3 { margin:0 0 4px; font-size:14px; }
+  .hkcard .meta { font-size:12px; color:var(--mut); margin-bottom:8px; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; background:#eef2ff; color:var(--acc); margin-right:4px; }
+  .pill.co { background:#fef3c7; color:#92400e; } .pill.stay { background:#e0f2fe; color:#075985; }
+  .staffrow { display:flex; gap:8px; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); }
+  .staffrow .nm { flex:1; font-size:14px; }
+  .mut { color:var(--mut); font-size:12px; }
+  .kbd { font-family:ui-monospace,monospace; background:#f4f4f5; padding:1px 6px; border-radius:4px; font-size:12px; }
+  /* print sheets */
+  #printArea { display:none; }
+  @media print {
+    header, nav, main, .noprint { display:none !important; }
+    #printArea { display:block; }
+    .sheet { page-break-after:always; font-size:12px; }
+    .sheet h2 { font-size:16px; margin:0 0 2px; }
+    .sheet table { font-size:11px; }
+    .sheet td, .sheet th { padding:4px 6px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Comfort Inn Prince Albert — Housekeeping Room Assignment (CN350)</h1>
+  <p>Offline · floor rotation · seniority rules · 14-checkout / 16-room caps</p>
+</header>
+<nav class="noprint">
+  <button data-tab="today" class="active">Today</button>
+  <button data-tab="staff">Staff &amp; Seniority</button>
+  <button data-tab="history">3-Day History</button>
+  <button data-tab="upload">Upload &amp; Parse</button>
+  <button data-tab="rooms">Rooms</button>
+</nav>
+<main>
+  <!-- TODAY -->
+  <section class="tab active" id="tab-today">
+    <div class="card">
+      <h2>1 · Business date &amp; who's working</h2>
+      <div class="row">
+        <label>Business date <input type="text" id="bizDate" value="11/01/2026" size="12"></label>
+      </div>
+      <div id="workingList" style="margin-top:10px"></div>
+      <p class="mut">Yesterday's floor is pulled from History (editable). Rule: nobody repeats yesterday's zone.</p>
+    </div>
+    <div class="card">
+      <h2>2 · Run assignment</h2>
+      <div class="row">
+        <button class="btn" id="btnAssign">Auto-Assign Rooms</button>
+        <button class="btn ghost" id="btnSaveHist">Save today into History</button>
+        <button class="btn ghost" id="btnPrint">Print sheets</button>
+        <button class="btn ghost" id="btnCsv">Export CSV</button>
+      </div>
+      <div id="assignOut" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <!-- STAFF -->
+  <section class="tab" id="tab-staff">
+    <div class="card">
+      <h2>Staff &amp; seniority (1 = most senior)</h2>
+      <div id="staffList"></div>
+      <div class="row" style="margin-top:10px">
+        <input type="text" id="newStaff" placeholder="New housekeeper name">
+        <button class="btn ghost" id="btnAddStaff">Add</button>
+      </div>
+      <p class="mut">Uneven checkouts and double-beds always go to the most senior <b>working</b> housekeepers.</p>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section class="tab" id="tab-history">
+    <div class="card">
+      <h2>Previous 3 days — floors &amp; workload (for fair rotation)</h2>
+      <div id="histTable"></div>
+      <p class="mut">Yesterday's floor drives today's rotation. Totals help you eyeball fairness across days.</p>
+    </div>
+  </section>
+
+  <!-- UPLOAD -->
+  <section class="tab" id="tab-upload">
+    <div class="card">
+      <h2>Upload / paste reports</h2>
+      <div class="row">
+        <label><input type="radio" name="pmode" value="assignment" checked> Housekeeping Assignment</label>
+        <label><input type="radio" name="pmode" value="departure"> Departure List</label>
+        <label><input type="radio" name="pmode" value="inhouse"> In-House List</label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input type="file" id="fileIn" accept=".pdf,.txt">
+        <span class="mut">PDF is parsed fully offline in this file. If a PDF won't extract, open it, Ctrl+A / Ctrl+C, paste below.</span>
+      </div>
+      <textarea id="pasteBox" placeholder="...or paste the report text here"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="btnParse">Parse</button>
+        <button class="btn ghost" id="btnLoadRooms" disabled>Load into Rooms</button>
+        <button class="btn ghost" id="btnLoadHist" disabled>Load sections into Yesterday history</button>
+      </div>
+      <div id="parseOut" style="margin-top:10px"></div>
+    </div>
+  </section>
+
+  <!-- ROOMS -->
+  <section class="tab" id="tab-rooms">
+    <div class="card">
+      <h2>Room inventory <span class="mut" id="roomCount"></span></h2>
+      <div id="roomsTable" style="max-height:520px; overflow:auto"></div>
+      <div class="row" style="margin-top:10px">
+        <input type="text" id="newRoomNum" placeholder="Room #" size="8">
+        <input type="text" id="newRoomType" placeholder="Type e.g. NQQ1" size="10">
+        <button class="btn ghost" id="btnAddRoom">Add room</button>
+      </div>
+      <p class="mut">Type codes: <span class="kbd">NQQ5</span> main 2-queen · <span class="kbd">NQQ1</span> upper 2-queen · <span class="kbd">NQ1</span> upper 1-queen · <span class="kbd">NQ5</span> main 1-queen · <span class="kbd">NK5</span> main king · <span class="kbd">NHQ1</span> main 1-queen accessible. Clean rooms are skipped; Stay = stayover; anything else dirty = checkout clean.</p>
+    </div>
+  </section>
+</main>
+
+<div id="printArea"></div>
+
+<script>
+
+/* Comfort Inn Prince Albert (CN350) — Housekeeping Room Assignment Engine
+ * Pure logic, no DOM. Runs in Node and in the browser.
+ * Rules implemented:
+ *  R1  Floor rotation: nobody repeats yesterday's floor zone (F1/F2/Split).
+ *  R3/R5/R9 Seniority: uneven checkouts and double-beds go to most senior working HKs.
+ *  R6  Hard caps: max 14 checkouts and max 16 total rooms per HK per day. Overflow listed.
+ */
+'use strict';
+
+const MAX_CHECKOUTS = 14;
+const MAX_ROOMS = 16;
+
+const DEFAULT_SENIORITY = ['Staff 1', 'Staff 2', 'Staff 3', 'Staff 4', 'Staff 5', 'Staff 6', 'Staff 7'];
+
+/* Room type -> { floor, beds, isDouble }.
+ * Floor from code suffix: ...5 = main (Floor 1), ...1 = upper (Floor 2).
+ * NHQ1 is the explicit exception: 1 queen on the MAIN floor (accessible). */
+function roomTypeInfo(type) {
+  const t = String(type || '').toUpperCase().trim();
+  if (t === 'NHQ1') return { floor: 1, beds: '1Q', isDouble: false };
+  const m = t.match(/^(NQ+|NK|NHQ)([15])$/);
+  if (!m) return { floor: t.endsWith('5') ? 1 : 2, beds: '?', isDouble: false };
+  const floor = m[2] === '5' ? 1 : 2;
+  const isDouble = t.indexOf('QQ') !== -1;
+  const beds = isDouble ? '2Q' : (t.indexOf('K') !== -1 ? 'King' : '1Q');
+  return { floor, beds, isDouble };
+}
+
+function floorOfRoom(room) {
+  const n = parseInt(room.num, 10);
+  if (n >= 100 && n < 200) return 1;
+  if (n >= 200 && n < 300) return 2;
+  return roomTypeInfo(room.type).floor;
+}
+
+/* kind: 'checkout' | 'stay' | 'clean'
+ * Clean rooms need no work. Dirty non-stay rooms are checkout-type (full clean),
+ * including vacant-dirty ("unmarked") rooms. Stay = stayover service. */
+function roomKind(room) {
+  const cond = String(room.condition || '').toLowerCase();
+  if (cond === 'clean') return 'clean';
+  const sc = String(room.stayco || '').toLowerCase();
+  if (sc.indexOf('stay') !== -1) return 'stay';
+  return 'checkout';
+}
+
+function zoneCovers(zone, roomFloor) {
+  return zone === 'Split' || zone === 'F' + roomFloor;
+}
+
+function allowedZones(prev) {
+  const all = ['F1', 'F2', 'Split'];
+  return prev ? all.filter((z) => z !== prev) : all.slice();
+}
+
+/* Greedy distribution of rooms to HKs with FIXED zones.
+ * Fewest-first on the scarce resource; seniority breaks ties, so uneven
+ * checkouts / double-beds go to the most senior working housekeepers. */
+function distribute(workRooms, hks, rank) {
+  const overflow = [];
+  for (const room of workRooms) {
+    const cands = hks.filter((hk) =>
+      zoneCovers(hk.zone, room.floor) &&
+      !(room.kind === 'checkout' && hk.co + 1 > MAX_CHECKOUTS) &&
+      hk.rooms.length + 1 <= MAX_ROOMS);
+    if (!cands.length) { overflow.push(room); continue; }
+    let best = cands[0], bestScore = scoreOf(cands[0], room, rank);
+    for (let i = 1; i < cands.length; i++) {
+      const s = scoreOf(cands[i], room, rank);
+      if (cmpKey(s, bestScore) < 0) { best = cands[i]; bestScore = s; }
+    }
+    best.rooms.push(room);
+    if (room.kind === 'checkout') best.co++;
+    else best.stay++;
+    if (room.isDouble) best.dbl++;
+  }
+  return overflow;
+}
+
+function scoreOf(hk, room, rank) {
+  const dbl = room.isDouble ? hk.dbl : 0;
+  const key = room.kind === 'checkout'
+    ? [hk.co, dbl, hk.rooms.length]
+    : [hk.rooms.length, dbl, hk.co];
+  return key.concat([rank[hk.name]]);
+}
+
+function cmpKey(a, b) {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+function blankHks(workingNames, seniority) {
+  const rank = {};
+  seniority.forEach((n, i) => { rank[n] = i; });
+  workingNames.forEach((n) => { if (!(n in rank)) rank[n] = 1e6; });
+  return {
+    rank,
+    hks: workingNames
+      .map((name) => ({ name, rooms: [], co: 0, stay: 0, dbl: 0, zone: null }))
+      .sort((a, b) => (rank[a.name] - rank[b.name]) || (workingNames.indexOf(a.name) - workingNames.indexOf(b.name))),
+  };
+}
+
+function scoreCombo(hks, overflow, idealCo, idealDbl) {
+  const maxTotal = Math.max.apply(null, hks.map((h) => h.rooms.length).concat([0]));
+  const splits = hks.filter((h) => h.zone === 'Split').length;
+  let devCo = 0, devDbl = 0;
+  hks.forEach((h) => {
+    devCo += Math.abs(h.co - (idealCo[h.name] || 0));
+    devDbl += Math.abs(h.dbl - (idealDbl[h.name] || 0));
+  });
+  return [overflow.length, devCo, devDbl, maxTotal, splits];
+}
+
+function assignRooms(opts) {
+  const roomsIn = opts.rooms || [];
+  const seniority = opts.seniority && opts.seniority.length ? opts.seniority : DEFAULT_SENIORITY;
+  const prevFloor = opts.prevFloor || {};
+  const workingNames = (opts.working || []).filter(Boolean);
+
+  const rooms = roomsIn.map((r) => {
+    const info = roomTypeInfo(r.type);
+    const n = parseInt(r.num, 10);
+    const floor = r.floor || ((n >= 100 && n < 200) ? 1 : (n >= 200 && n < 300) ? 2 : info.floor);
+    return {
+      num: String(r.num), type: r.type, floor,
+      status: r.status || '', condition: r.condition || 'Dirty', stayco: r.stayco || '',
+      beds: info.beds, isDouble: info.isDouble,
+    };
+  });
+  rooms.forEach((r) => { r.kind = roomKind(r); });
+
+  const clean = rooms.filter((r) => r.kind === 'clean');
+  const work = rooms.filter((r) => r.kind !== 'clean');
+  work.sort((a, b) => {
+    const ka = a.kind === 'checkout' ? 0 : 1, kb = b.kind === 'checkout' ? 0 : 1;
+    if (ka !== kb) return ka - kb;
+    return parseInt(a.num, 10) - parseInt(b.num, 10);
+  });
+
+  const allowed = workingNames.map((n) => allowedZones(prevFloor[n]));
+  // Ideal seniority-weighted targets: uneven checkouts / doubles go to most senior.
+  const totalCo = work.filter((r) => r.kind === 'checkout').length;
+  const totalDbl = work.filter((r) => r.isDouble).length;
+  const b0 = blankHks(workingNames, seniority);
+  const idealCo = {}, idealDbl = {};
+  b0.hks.forEach((hk, i) => {
+    idealCo[hk.name] = Math.floor(totalCo / b0.hks.length) + (i < totalCo % b0.hks.length ? 1 : 0);
+    idealDbl[hk.name] = Math.floor(totalDbl / b0.hks.length) + (i < totalDbl % b0.hks.length ? 1 : 0);
+  });
+  // Enumerate every zone combination (<= 3^7 = 2187), keep the best-scoring one.
+  const zones = ['F1', 'F2', 'Split'];
+  let bestCombo = null, bestScore = null, bestResult = null;
+  const combo = new Array(workingNames.length);
+
+  function evaluate() {
+    // Every floor with rooms needs at least one covering HK.
+    const need1 = work.some((r) => r.floor === 1), need2 = work.some((r) => r.floor === 2);
+    const cov1 = combo.some((z) => z === 'F1' || z === 'Split');
+    const cov2 = combo.some((z) => z === 'F2' || z === 'Split');
+    if ((need1 && !cov1) || (need2 && !cov2)) return;
+    const b = blankHks(workingNames, seniority);
+    b.hks.forEach((hk, i) => { hk.zone = combo[i]; });
+    const overflow = distribute(work, b.hks, b.rank);
+    const sc = scoreCombo(b.hks, overflow, idealCo, idealDbl);
+    if (!bestScore || cmpKey(sc, bestScore) < 0) {
+      bestScore = sc; bestCombo = combo.slice();
+      bestResult = { hks: b.hks, overflow };
+    }
+  }
+
+  (function rec(i) {
+    if (i === workingNames.length) { evaluate(); return; }
+    const optsZ = allowed[i].length ? allowed[i] : zones;
+    for (const z of optsZ) { combo[i] = z; rec(i + 1); }
+  })(0);
+
+  const warnings = [];
+  let hks, overflow;
+  if (bestResult) {
+    hks = bestResult.hks; overflow = bestResult.overflow;
+  } else {
+    const b = blankHks(workingNames, seniority);
+    hks = b.hks; overflow = work.slice();
+  }
+
+  if (overflow.length) {
+    warnings.push(overflow.length + ' room(s) over capacity (14 checkout / 16 room caps) — ' +
+      'blocked for tomorrow or call another housekeeper: ' +
+      overflow.map((r) => r.num + '(' + r.kind + ')').join(', '));
+  }
+  for (const hk of hks) {
+    const prev = prevFloor[hk.name];
+    if (prev && hk.zone === prev && hk.rooms.length) {
+      warnings.push('ROTATION VIOLATION: ' + hk.name + ' repeated ' + prev);
+    }
+  }
+
+  return {
+    assignments: hks.map((hk) => ({
+      name: hk.name, zone: hk.zone || '—',
+      rooms: hk.rooms.slice().sort((a, b) => parseInt(a.num, 10) - parseInt(b.num, 10)),
+      checkouts: hk.co, stays: hk.stay, total: hk.rooms.length, doubles: hk.dbl,
+    })),
+    overflow, clean, warnings,
+    totals: {
+      checkouts: work.filter((r) => r.kind === 'checkout').length,
+      stays: work.filter((r) => r.kind === 'stay').length,
+      clean: clean.length,
+      working: hks.length,
+    },
+  };
+}
+
+/* Parse pasted/extracted text.
+ * mode 'assignment': Housekeeping Room Assignment rows "118|NQ5|VAC|Dirty|C/O|1"
+ *   (multi-room rows "131 132|NQ5 NQ5|VAC VAC|Dirty Dirty|C/O C/O|1" are zipped).
+ *   "## Lastname, Firstname" headers start a housekeeper section (for history).
+ * mode 'departure': Departure List rows -> room number = trailing 3-digit token; all = checkout.
+ * mode 'inhouse': In-House rows -> room, type, depart date; depart==bizDate -> checkout else stay.
+ */
+function parseText(text, mode, bizDate) {
+  const lines = String(text || '').split(/\r?\n/);
+  const rooms = [];
+  const sections = []; // {hk, rooms:[], co:0}
+  let cur = null;
+
+  const isNoise = (ln) =>
+    /total rooms|date\/time of printing|business date|property code|room notes|bed sheet|pillow slips|bath towels|hand towels|bath mats|wash cloths|remarks special|deep change|service|stay\/c\/o|occ los|condition|status/i.test(ln) &&
+    !/^\s*\d{3}\b/.test(ln);
+
+  if (mode === 'assignment') {
+    for (const raw of lines) {
+      const ln = raw.trim();
+      if (!ln) continue;
+      const hm = ln.match(/^#{0,2}\s*([A-Za-z'’\-]+),\s*([A-Za-z'’\-]+)/);
+      if (hm && !/^\s*\d{3}\b/.test(ln)) {
+        cur = { hk: hm[2].trim(), rooms: [], co: 0 };
+        sections.push(cur);
+        continue;
+      }
+      if (isNoise(ln)) continue;
+      if (!/\d{3}/.test(ln)) continue;
+      const cells = ln.split('|').map((c) => c.trim());
+      // Room numbers may sit in the first non-empty cell (rows often start with '|').
+      let ri = cells.findIndex((c) => /\b\d{3}\b/.test(c));
+      if (ri < 0) continue;
+      const nums = (cells[ri].match(/\b\d{3}\b/g) || []);
+      const types = ((cells[ri + 1] || '').match(/\bN[A-Z]*Q{0,2}[15]\b|\bNHQ1\b/g) || []);
+      const stats = ((cells[ri + 2] || '').match(/\bVAC\b|\bOCC\b/gi) || []);
+      const conds = (cells[ri + 3] || '').match(/\bClean\b|\bDirty\b/gi) || [];
+      const scs = (cells[ri + 4] || '').match(/\bStay\b|\bC\/O\b/gi) || [];
+      const n = Math.max(nums.length, 1);
+      for (let i = 0; i < n; i++) {
+        const num = nums[i];
+        if (!num) continue;
+        const room = {
+          num,
+          type: types[i] || types[0] || '',
+          status: (stats[i] || stats[0] || '').toUpperCase(),
+          condition: (conds[i] || conds[0] || 'Dirty'),
+          stayco: (scs[i] || scs[0] || ''),
+        };
+        rooms.push(room);
+        if (cur) { cur.rooms.push(num); if (/c\/o/i.test(room.stayco)) cur.co++; }
+      }
+    }
+  } else if (mode === 'departure') {
+    for (const raw of lines) {
+      const ln = raw.trim();
+      if (!ln || /account|guest name|arrival|departure|date\/time|total departures|page \d/i.test(ln)) continue;
+      const m = ln.match(/(\d{3})\s*$/);
+      if (m) rooms.push({ num: m[1], type: '', status: '', condition: 'Dirty', stayco: 'C/O' });
+    }
+  } else if (mode === 'inhouse') {
+    const bd = String(bizDate || '').trim();
+    for (const raw of lines) {
+      const ln = raw.trim();
+      if (!ln || /room account|guest name|date\/time|total in house|page \d/i.test(ln)) continue;
+      const rm = ln.match(/^\s*(\d{3})\b/);
+      const tm = ln.match(/\b(NHQ1|N[A-Z]*Q{0,2}[15])\b/);
+      const dm = ln.match(/\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b.*?\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/);
+      if (rm && tm && dm) {
+        const depart = dm[2];
+        const isCheckout = bd && normDate(depart) === normDate(bd);
+        rooms.push({ num: rm[1], type: tm[1], status: '', condition: 'Dirty', stayco: isCheckout ? 'C/O' : 'Stay' });
+      }
+    }
+  }
+  return { rooms, sections };
+}
+
+function normDate(s) {
+  const m = String(s).match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return s;
+  let y = m[3]; if (y.length === 2) y = '20' + y;
+  return y + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');
+}
+
+/* Minimal offline PDF text extraction: decompress FlateDecode streams with the
+ * built-in DecompressionStream, then pull (text) Tj / [..] TJ operators. */
+async function extractPdfText(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const bin = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+  const texts = [];
+  const streamRe = /stream\r?\n([\s\S]*?)endstream/g;
+  let m;
+  const parts = [];
+  while ((m = streamRe.exec(bin)) !== null) {
+    const start = m.index + m[0].indexOf(m[1]);
+    parts.push(bytes.slice(start, start + m[1].length));
+  }
+  for (const part of parts) {
+    let raw = null;
+    try {
+      const ds = new DecompressionStream('deflate');
+      const s = new Blob([part]).stream().pipeThrough(ds);
+      raw = await new Response(s).arrayBuffer();
+    } catch (e) { /* not flate */ }
+    const chunk = raw ? Array.from(new Uint8Array(raw), (b) => String.fromCharCode(b)).join('') : null;
+    const src = chunk || Array.from(part, (b) => String.fromCharCode(b)).join('');
+    texts.push(src);
+  }
+  const full = texts.join('\n');
+  const out = [];
+  const tjRe = /\((?:[^()\\]|\\.|\\\r?\n)*\)\s*Tj/g;
+  let t;
+  while ((t = tjRe.exec(full)) !== null) out.push(unescapePdfStr(t[0].slice(0, t[0].lastIndexOf(')'))));
+  const tjaRe = /\[((?:[^\[\]\\]|\\.|\([^()]*\))*)\]\s*TJ/g;
+  while ((t = tjaRe.exec(full)) !== null) {
+    const inner = t[1];
+    const sRe = /\((?:[^()\\]|\\.)*\)/g;
+    let s;
+    while ((s = sRe.exec(inner)) !== null) out.push(unescapePdfStr(s[0]));
+  }
+  return out.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function unescapePdfStr(s) {
+  // s includes surrounding parens
+  let inner = s.slice(1, -1);
+  inner = inner.replace(/\\([nrtbf()\\])/g, (mm, c) => ({ n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\' }[c]));
+  inner = inner.replace(/\\(\d{1,3})/g, (mm, o) => String.fromCharCode(parseInt(o, 8)));
+  return inner;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { assignRooms, parseText, roomTypeInfo, roomKind, normDate, DEFAULT_SENIORITY, MAX_CHECKOUTS, MAX_ROOMS };
+}
+
+
+</script>
+<script>
+(function () {
+  'use strict';
+  var LS = 'hk_assign_pub_v1';
+
+  /* ---------- default data (parsed from the 10/30/2026 reports) ---------- */
+  var TYPES = {102:'NQQ5',103:'NQ5',104:'NQ5',105:'NK5',106:'NQ5',107:'NHQ1',108:'NQ5',109:'NQQ5',110:'NQ5',111:'NQQ5',112:'NQ5',115:'NQ5',116:'NQQ5',117:'NQ5',118:'NQ5',119:'NK5',120:'NK5',121:'NQ5',122:'NQQ5',123:'NQQ5',124:'NQQ5',125:'NQQ5',126:'NK5',127:'NQQ5',128:'NQQ5',129:'NK5',130:'NK5',131:'NQ5',132:'NQ5',202:'NQ1',203:'NQ1',204:'NQ1',205:'NQQ1',206:'NQQ1',207:'NQ1',208:'NQ1',209:'NQQ1',210:'NQQ1',211:'NQQ1',212:'NQQ1',215:'NQQ1',216:'NQQ1',217:'NQQ1',218:'NQQ1',219:'NQQ1',221:'NQQ1',222:'NQQ1',223:'NQQ1',224:'NQ1',225:'NQ1',226:'NQ1',227:'NQQ1',228:'NQ1',229:'NQQ1',230:'NQ1',231:'NQQ1',232:'NQQ1',233:'NQ1',234:'NQ1',235:'NQ1',236:'NQ1'};
+  var CO = [102,103,104,105,109,110,111,112,116,118,119,120,121,122,123,125,126,128,129,130,131,132,202,203,204,205,207,208,210,211,212,215,216,217,218,221,223,224,225,226,227,228,229,230,232,235,236];
+  var STAY = [107,108,115,117,124,206,209,219,231,233,234];
+  var CLEAN = [106,127,222];
+
+  function defaultRooms() {
+    return Object.keys(TYPES).map(function (k) {
+      var n = +k;
+      return {
+        num: k, type: TYPES[k],
+        status: 'OCC',
+        condition: CLEAN.indexOf(n) >= 0 ? 'Clean' : 'Dirty',
+        stayco: STAY.indexOf(n) >= 0 ? 'Stay' : (CLEAN.indexOf(n) >= 0 ? '' : 'C/O')
+      };
+    });
+  }
+  function defaultState() {
+    return {
+      staff: DEFAULT_SENIORITY.map(function (n) { return { name: n }; }),
+      history: {},
+      rooms: defaultRooms(),
+      bizDate: '11/01/2026'
+    };
+  }
+
+  var state;
+  try { state = JSON.parse(localStorage.getItem(LS)) || defaultState(); }
+  catch (e) { state = defaultState(); }
+  if (!state.staff || !state.staff.length) state = defaultState();
+  function save() { localStorage.setItem(LS, JSON.stringify(state)); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function floorLabel(z) { return z === 'F1' ? 'Floor 1 (Main)' : z === 'F2' ? 'Floor 2 (Upper)' : z === 'Split' ? 'Split' : '—'; }
+
+  /* ---------- tabs ---------- */
+  document.querySelectorAll('nav button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('nav button').forEach(function (x) { x.classList.remove('active'); });
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+    });
+  });
+
+  /* ---------- today tab ---------- */
+  var working = {}; // name -> {on, prev}
+  function renderWorking() {
+    var el = document.getElementById('workingList');
+    var html = '<table><tr><th>Working</th><th>Housekeeper</th><th>Yesterday\'s floor</th></tr>';
+    state.staff.forEach(function (s) {
+      var w = working[s.name] || (working[s.name] = { on: true, prev: '' });
+      var h = (state.history[s.name] && state.history[s.name].d1) || {};
+      if (!w.prev && h.floor) w.prev = h.floor;
+      html += '<tr><td><input type="checkbox" data-w="' + esc(s.name) + '"' + (w.on ? ' checked' : '') + '></td>' +
+        '<td>' + esc(s.name) + '</td>' +
+        '<td><select data-p="' + esc(s.name) + '">' +
+        [''].concat(['F1', 'F2', 'Split']).map(function (z) {
+          return '<option value="' + z + '"' + (w.prev === z ? ' selected' : '') + '>' + (z ? floorLabel(z) : '— unknown —') + '</option>';
+        }).join('') + '</select></td></tr>';
+    });
+    el.innerHTML = html + '</table>';
+    el.querySelectorAll('[data-w]').forEach(function (cb) {
+      cb.addEventListener('change', function () { working[cb.dataset.w].on = cb.checked; });
+    });
+    el.querySelectorAll('[data-p]').forEach(function (sel) {
+      sel.addEventListener('change', function () { working[sel.dataset.p].prev = sel.value; });
+    });
+  }
+
+  var lastResult = null;
+  document.getElementById('btnAssign').addEventListener('click', function () {
+    var names = state.staff.map(function (s) { return s.name; }).filter(function (n) { return working[n] && working[n].on; });
+    if (!names.length) { document.getElementById('assignOut').innerHTML = '<div class="warn">Select at least one working housekeeper.</div>'; return; }
+    var prev = {};
+    names.forEach(function (n) { if (working[n].prev) prev[n] = working[n].prev; });
+    state.bizDate = document.getElementById('bizDate').value;
+    var res = assignRooms({ rooms: state.rooms, working: names, seniority: state.staff.map(function (s) { return s.name; }), prevFloor: prev });
+    lastResult = { res: res, date: state.bizDate };
+    save();
+    renderResult(res);
+  });
+
+  function renderResult(res) {
+    var el = document.getElementById('assignOut');
+    var html = '';
+    res.warnings.forEach(function (w) { html += '<div class="warn">' + esc(w) + '</div>'; });
+    if (!res.warnings.length) html += '<div class="okline">All rules satisfied — rotation respected, caps held (' + res.totals.checkouts + ' checkouts, ' + res.totals.stays + ' stayovers, ' + res.totals.clean + ' clean skipped).</div>';
+    html += '<div class="hkgrid">';
+    res.assignments.forEach(function (a) {
+      html += '<div class="hkcard"><h3>' + esc(a.name) + '</h3>' +
+        '<div class="meta">' + floorLabel(a.zone) + ' · ' + a.checkouts + ' C/O · ' + a.stays + ' stay · ' + a.doubles + ' double-beds · ' + a.total + ' rooms</div>' +
+        '<table><tr><th>Room</th><th>Type</th><th>Beds</th><th>Job</th></tr>';
+      a.rooms.forEach(function (r) {
+        html += '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.beds) + '</td>' +
+          '<td><span class="pill ' + (r.kind === 'checkout' ? 'co' : 'stay') + '">' + (r.kind === 'checkout' ? 'C/O' : 'Stay') + '</span></td></tr>';
+      });
+      html += '</table></div>';
+    });
+    html += '</div>';
+    if (res.overflow.length) {
+      html += '<div class="card" style="margin-top:12px"><h2>Blocked for tomorrow / call another housekeeper (' + res.overflow.length + ')</h2><table><tr><th>Room</th><th>Type</th><th>Job</th></tr>' +
+        res.overflow.map(function (r) { return '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + r.kind + '</td></tr>'; }).join('') + '</table></div>';
+    }
+    if (res.clean.length) {
+      html += '<p class="mut">Clean / no work: ' + res.clean.map(function (r) { return r.num; }).join(', ') + '</p>';
+    }
+    el.innerHTML = html;
+  }
+
+  document.getElementById('btnSaveHist').addEventListener('click', function () {
+    if (!lastResult) { alert('Run Auto-Assign first.'); return; }
+    lastResult.res.assignments.forEach(function (a) {
+      var h = state.history[a.name] || (state.history[a.name] = { d3: {}, d2: {}, d1: {} });
+      h.d3 = h.d2; h.d2 = h.d1;
+      h.d1 = { floor: a.zone, rooms: a.total, co: a.checkouts, date: lastResult.date };
+    });
+    save(); renderHistory(); renderWorking();
+    alert('Saved into History as yesterday (' + lastResult.date + ').');
+  });
+
+  document.getElementById('btnPrint').addEventListener('click', function () {
+    if (!lastResult) { alert('Run Auto-Assign first.'); return; }
+    var pa = document.getElementById('printArea');
+    var html = '';
+    lastResult.res.assignments.forEach(function (a) {
+      html += '<div class="sheet"><h2>Comfort Inn Prince Albert (CN350) — Housekeeping Assignment</h2>' +
+        '<p>Date: ' + esc(lastResult.date) + ' &nbsp;·&nbsp; Housekeeper: <b>' + esc(a.name) + '</b> &nbsp;·&nbsp; Zone: ' + floorLabel(a.zone) +
+        ' &nbsp;·&nbsp; ' + a.checkouts + ' checkouts / ' + a.stays + ' stayovers / ' + a.doubles + ' double-beds</p>' +
+        '<table><tr><th>Room</th><th>Type</th><th>Beds</th><th>Status</th><th>C/O–Stay</th><th>Linen &#10003;</th><th>Towels &#10003;</th><th>Remarks</th></tr>';
+      a.rooms.forEach(function (r) {
+        html += '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.beds) + '</td><td>' + esc(r.status) + '</td>' +
+          '<td>' + (r.kind === 'checkout' ? 'C/O' : 'Stay') + '</td><td></td><td></td><td></td></tr>';
+      });
+      html += '</table><p>Supervisor signature: ____________________ &nbsp;&nbsp; Housekeeper signature: ____________________</p></div>';
+    });
+    if (lastResult.res.overflow.length) {
+      html += '<div class="sheet"><h2>Blocked for tomorrow / call another housekeeper</h2><table><tr><th>Room</th><th>Type</th><th>Job</th></tr>' +
+        lastResult.res.overflow.map(function (r) { return '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + r.kind + '</td></tr>'; }).join('') + '</table></div>';
+    }
+    pa.innerHTML = html;
+    window.print();
+  });
+
+  document.getElementById('btnCsv').addEventListener('click', function () {
+    if (!lastResult) { alert('Run Auto-Assign first.'); return; }
+    var rows = [['Date', 'Housekeeper', 'Zone', 'Room', 'Type', 'Beds', 'Status', 'Job']];
+    lastResult.res.assignments.forEach(function (a) {
+      a.rooms.forEach(function (r) {
+        rows.push([lastResult.date, a.name, floorLabel(a.zone), r.num, r.type, r.beds, r.status, r.kind]);
+      });
+    });
+    var csv = rows.map(function (r) { return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = 'housekeeping-' + lastResult.date.replace(/\//g, '-') + '.csv';
+    a.click();
+  });
+
+  /* ---------- staff tab ---------- */
+  function renderStaff() {
+    var el = document.getElementById('staffList');
+    el.innerHTML = state.staff.map(function (s, i) {
+      return '<div class="staffrow"><span class="mut">#' + (i + 1) + '</span><span class="nm">' + esc(s.name) + '</span>' +
+        '<button class="btn ghost" data-mv="-1" data-i="' + i + '">&uarr;</button>' +
+        '<button class="btn ghost" data-mv="1" data-i="' + i + '">&darr;</button>' +
+        '<button class="btn ghost" data-rn="' + i + '">Rename</button>' +
+        '<button class="btn ghost" data-rm="' + i + '">Remove</button></div>';
+    }).join('');
+    el.querySelectorAll('[data-mv]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var i = +b.dataset.i, j = i + (+b.dataset.mv);
+        if (j < 0 || j >= state.staff.length) return;
+        var t = state.staff[i]; state.staff[i] = state.staff[j]; state.staff[j] = t;
+        save(); renderStaff(); renderWorking(); renderHistory();
+      });
+    });
+    el.querySelectorAll('[data-rn]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var i = +b.dataset.rn, old = state.staff[i].name;
+        var v = prompt('Name for ' + old + ':', /^Staff \d+$/.test(old) ? '' : old);
+        if (v == null) return;
+        v = v.trim(); if (!v || v === old) return;
+        state.staff[i].name = v;
+        if (state.history[old]) { state.history[v] = state.history[old]; delete state.history[old]; }
+        save(); renderStaff(); renderWorking(); renderHistory();
+      });
+    });
+    el.querySelectorAll('[data-rm]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!confirm('Remove ' + state.staff[+b.dataset.rm].name + '?')) return;
+        state.staff.splice(+b.dataset.rm, 1);
+        save(); renderStaff(); renderWorking(); renderHistory();
+      });
+    });
+  }
+  document.getElementById('btnAddStaff').addEventListener('click', function () {
+    var v = document.getElementById('newStaff').value.trim();
+    if (!v) return;
+    state.staff.push({ name: v });
+    document.getElementById('newStaff').value = '';
+    save(); renderStaff(); renderWorking(); renderHistory();
+  });
+
+  /* ---------- history tab ---------- */
+  function renderHistory() {
+    var el = document.getElementById('histTable');
+    var html = '<table><tr><th>Housekeeper</th><th>Day −3<br>floor / rooms / C-O</th><th>Day −2<br>floor / rooms / C-O</th><th>Yesterday<br>floor / rooms / C-O</th><th>3-day rooms</th></tr>';
+    state.staff.forEach(function (s) {
+      var h = state.history[s.name] || { d3: {}, d2: {}, d1: {} };
+      var tot = 0;
+      ['d3', 'd2', 'd1'].forEach(function (d) { tot += +(h[d].rooms || 0); });
+      html += '<tr><td>' + esc(s.name) + '</td>' + ['d3', 'd2', 'd1'].map(function (d) {
+        var e = h[d] || {};
+        return '<td><select data-h="' + esc(s.name) + '|' + d + '|floor">' +
+          [''].concat(['F1', 'F2', 'Split']).map(function (z) {
+            return '<option value="' + z + '"' + (e.floor === z ? ' selected' : '') + '>' + (z ? floorLabel(z) : '—') + '</option>';
+          }).join('') + '</select> ' +
+          '<input type="number" min="0" max="40" style="width:56px" placeholder="rms" data-h="' + esc(s.name) + '|' + d + '|rooms" value="' + (e.rooms == null ? '' : e.rooms) + '"> ' +
+          '<input type="number" min="0" max="40" style="width:56px" placeholder="c/o" data-h="' + esc(s.name) + '|' + d + '|co" value="' + (e.co == null ? '' : e.co) + '"></td>';
+      }).join('') + '<td><b>' + tot + '</b></td></tr>';
+    });
+    el.innerHTML = html + '</table>';
+    el.querySelectorAll('[data-h]').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        var p = inp.dataset.h.split('|');
+        var h = state.history[p[0]] || (state.history[p[0]] = { d3: {}, d2: {}, d1: {} });
+        h[p[1]] = h[p[1]] || {};
+        h[p[1]][p[2]] = inp.value === '' ? undefined : (p[2] === 'floor' ? inp.value : +inp.value);
+        save(); renderHistory();
+      });
+    });
+  }
+
+  /* ---------- upload tab ---------- */
+  var parsed = null;
+  function mode() { var r = document.querySelector('input[name=pmode]:checked'); return r ? r.value : 'assignment'; }
+  document.getElementById('fileIn').addEventListener('change', function (ev) {
+    var f = ev.target.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      if (/\.pdf$/i.test(f.name)) {
+        extractPdfText(rd.result).then(function (t) {
+          document.getElementById('pasteBox').value = t;
+        }).catch(function () { alert('Could not extract this PDF here — open it, Ctrl+A / Ctrl+C, and paste the text.'); });
+      } else {
+        document.getElementById('pasteBox').value = rd.result;
+      }
+    };
+    if (/\.pdf$/i.test(f.name)) rd.readAsArrayBuffer(f); else rd.readAsText(f);
+  });
+  document.getElementById('btnParse').addEventListener('click', function () {
+    var t = document.getElementById('pasteBox').value;
+    var m = mode();
+    parsed = parseText(t, m, document.getElementById('bizDate').value);
+    var kinds = { checkout: 0, stay: 0, clean: 0 };
+    parsed.rooms.forEach(function (r) {
+      var info = roomTypeInfo(r.type);
+      r.floor = (parseInt(r.num, 10) >= 200) ? 2 : 1;
+      r.isDouble = info.isDouble; r.beds = info.beds;
+      kinds[roomKind(r)]++;
+    });
+    document.getElementById('parseOut').innerHTML =
+      '<div class="okline">Parsed <b>' + parsed.rooms.length + '</b> rooms — ' + kinds.checkout + ' checkouts, ' + kinds.stay + ' stayovers, ' + kinds.clean + ' clean.' +
+      (parsed.sections.length ? ' Sections found: ' + parsed.sections.map(function (s) { return esc(s.hk) + ' (' + s.rooms.length + ' rms, ' + s.co + ' C/O)'; }).join('; ') + '.' : '') + '</div>';
+    document.getElementById('btnLoadRooms').disabled = !parsed.rooms.length;
+    document.getElementById('btnLoadHist').disabled = !parsed.sections.length;
+  });
+  document.getElementById('btnLoadRooms').addEventListener('click', function () {
+    if (!parsed) return;
+    state.rooms = parsed.rooms.map(function (r) { return { num: r.num, type: r.type, status: r.status, condition: r.condition, stayco: r.stayco }; });
+    state.bizDate = document.getElementById('bizDate').value;
+    save(); renderRooms();
+    alert(state.rooms.length + ' rooms loaded.');
+  });
+  document.getElementById('btnLoadHist').addEventListener('click', function () {
+    if (!parsed) return;
+    parsed.sections.forEach(function (s) {
+      var match = state.staff.map(function (x) { return x.name; }).find(function (n) { return n.toLowerCase() === s.hk.toLowerCase(); });
+      var name = match || s.hk;
+      var h = state.history[name] || (state.history[name] = { d3: {}, d2: {}, d1: {} });
+      var f1 = s.rooms.filter(function (n) { return +n < 200; }).length;
+      var f2 = s.rooms.length - f1;
+      var zone = (f1 && f2) ? 'Split' : (f1 ? 'F1' : 'F2');
+      h.d1 = { floor: zone, rooms: s.rooms.length, co: s.co };
+    });
+    save(); renderHistory(); renderWorking();
+    alert('Yesterday history loaded from report sections.');
+  });
+
+  /* ---------- rooms tab ---------- */
+  function renderRooms() {
+    var el = document.getElementById('roomsTable');
+    var sorted = state.rooms.slice().sort(function (a, b) { return +a.num - +b.num; });
+    var counts = { checkout: 0, stay: 0, clean: 0 };
+    var html = '<table><tr><th>Room</th><th>Type</th><th>Floor</th><th>Beds</th><th>Status</th><th>Condition</th><th>Job</th><th></th></tr>';
+    sorted.forEach(function (r, i) {
+      var info = roomTypeInfo(r.type);
+      var fl = (+r.num >= 200) ? 2 : 1;
+      var kind = roomKind(r);
+      counts[kind]++;
+      html += '<tr><td>' + esc(r.num) + '</td><td><input type="text" size="7" data-r="' + i + '|type" value="' + esc(r.type) + '"></td>' +
+        '<td>' + fl + '</td><td>' + info.beds + (info.isDouble ? ' *' : '') + '</td>' +
+        '<td><select data-r="' + i + '|status">' + ['VAC', 'OCC'].map(function (s) { return '<option' + (r.status === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></td>' +
+        '<td><select data-r="' + i + '|condition">' + ['Dirty', 'Clean'].map(function (s) { return '<option' + (r.condition === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></td>' +
+        '<td><select data-r="' + i + '|stayco">' + ['', 'C/O', 'Stay'].map(function (s) { return '<option value="' + s + '"' + (r.stayco === s ? ' selected' : '') + '>' + (s || '—') + '</option>'; }).join('') + '</select></td>' +
+        '<td><button class="btn ghost" data-del="' + esc(r.num) + '">×</button></td></tr>';
+    });
+    el.innerHTML = html + '</table>';
+    document.getElementById('roomCount').textContent = '— ' + sorted.length + ' rooms (' + counts.checkout + ' C/O, ' + counts.stay + ' stay, ' + counts.clean + ' clean)';
+    el.querySelectorAll('[data-r]').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        var p = inp.dataset.r.split('|');
+        var room = sorted[+p[0]];
+        var real = state.rooms.find(function (x) { return x.num === room.num; });
+        real[p[1]] = inp.value;
+        save(); renderRooms();
+      });
+    });
+    el.querySelectorAll('[data-del]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        state.rooms = state.rooms.filter(function (x) { return x.num !== b.dataset.del; });
+        save(); renderRooms();
+      });
+    });
+  }
+  document.getElementById('btnAddRoom').addEventListener('click', function () {
+    var n = document.getElementById('newRoomNum').value.trim();
+    var t = document.getElementById('newRoomType').value.trim().toUpperCase();
+    if (!n) return;
+    state.rooms.push({ num: n, type: t || 'NQ5', status: 'VAC', condition: 'Dirty', stayco: 'C/O' });
+    document.getElementById('newRoomNum').value = '';
+    save(); renderRooms();
+  });
+
+  /* ---------- init ---------- */
+  document.getElementById('bizDate').value = state.bizDate || '11/01/2026';
+  renderWorking(); renderStaff(); renderHistory(); renderRooms();
+})();
+</script>
+<script>
+if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('./sw.js').catch(function () {}); }); }
+</script>
+</body>
+</html>
