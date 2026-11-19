@@ -97,6 +97,7 @@
         <button class="btn ghost" id="btnSaveHist">Save today into History</button>
         <button class="btn ghost" id="btnPrint">Print sheets</button>
         <button class="btn ghost" id="btnCsv">Export CSV</button>
+        <button class="btn ghost" id="btnReset">Reset demo data</button>
       </div>
       <div id="assignOut" style="margin-top:12px"></div>
     </div>
@@ -557,6 +558,11 @@ if (typeof module !== 'undefined' && module.exports) {
   catch (e) { state = defaultState(); }
   if (!state.staff || !state.staff.length) state = defaultState();
   function save() { localStorage.setItem(LS, JSON.stringify(state)); }
+  // One-time repair for rooms saved with a blank status (old replace-on-load
+  // bug): the Rooms tab already displays those as VAC, so store what the UI,
+  // CSV and print sheets show. Stayovers are occupied; everything else vacant.
+  state.rooms.forEach(function (r) { if (!r.status) r.status = (roomKind(r) === 'stay' ? 'OCC' : 'VAC'); });
+  save();
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function floorLabel(z) { return z === 'F1' ? 'Floor 1 (Main)' : z === 'F2' ? 'Floor 2 (Upper)' : z === 'Split' ? 'Split' : '—'; }
 
@@ -689,6 +695,16 @@ if (typeof module !== 'undefined' && module.exports) {
     a.click();
   });
 
+  document.getElementById('btnReset').addEventListener('click', function () {
+    if (!confirm('Reset everything to the demo data? This replaces the room list, staff names and history.')) return;
+    state = defaultState();
+    working = {};
+    lastResult = null;
+    document.getElementById('bizDate').value = state.bizDate;
+    save(); renderWorking(); renderStaff(); renderHistory(); renderRooms();
+    document.getElementById('assignOut').innerHTML = '<div class="okline">Demo data restored: 61 rooms (47 checkouts, 11 stayovers, 3 clean).</div>';
+  });
+
   /* ---------- staff tab ---------- */
   function renderStaff() {
     var el = document.getElementById('staffList');
@@ -731,6 +747,11 @@ if (typeof module !== 'undefined' && module.exports) {
             if (state.history[old]) { state.history[v] = state.history[old]; delete state.history[old]; }
             if (working[old]) { working[v] = working[old]; delete working[old]; }
             state.working = working;
+            if (state.lastResult && state.lastResult.res) {
+              state.lastResult.res.assignments.forEach(function (a) { if (a.name === old) a.name = v; });
+              lastResult = state.lastResult;
+              renderResult(state.lastResult.res);
+            }
           }
           save(); renderStaff(); renderWorking(); renderHistory();
         }
@@ -840,7 +861,7 @@ if (typeof module !== 'undefined' && module.exports) {
         ex.stayco = r.stayco;
         updated++;
       } else {
-        state.rooms.push({ num: r.num, type: r.type || 'NQ5', status: r.status || 'VAC', condition: r.condition, stayco: r.stayco });
+        state.rooms.push({ num: r.num, type: r.type || 'NQ5', status: r.status || (roomKind(r) === 'stay' ? 'OCC' : 'VAC'), condition: r.condition, stayco: r.stayco });
         added++;
       }
     });
