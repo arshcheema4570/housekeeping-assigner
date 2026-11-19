@@ -560,8 +560,12 @@ if (typeof module !== 'undefined' && module.exports) {
   function save() { localStorage.setItem(LS, JSON.stringify(state)); }
   // One-time repair for rooms saved with a blank status (old replace-on-load
   // bug): the Rooms tab already displays those as VAC, so store what the UI,
-  // CSV and print sheets show. Stayovers are occupied; everything else vacant.
-  state.rooms.forEach(function (r) { if (!r.status) r.status = (roomKind(r) === 'stay' ? 'OCC' : 'VAC'); });
+  // CSV and print sheets show. A stayover is occupied by definition, so it
+  // is always OCC; anything else with no stored status is VAC.
+  state.rooms.forEach(function (r) {
+    if (roomKind(r) === 'stay') r.status = 'OCC';
+    else if (!r.status) r.status = 'VAC';
+  });
   save();
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function floorLabel(z) { return z === 'F1' ? 'Floor 1 (Main)' : z === 'F2' ? 'Floor 2 (Upper)' : z === 'Split' ? 'Split' : '—'; }
@@ -695,8 +699,18 @@ if (typeof module !== 'undefined' && module.exports) {
     a.click();
   });
 
+  // Two-step inline confirm (no native dialog — those are suppressed in some
+  // browsers and untestable): first click arms, second click resets.
   document.getElementById('btnReset').addEventListener('click', function () {
-    if (!confirm('Reset everything to the demo data? This replaces the room list, staff names and history.')) return;
+    var b = this;
+    if (!b.dataset.armed) {
+      b.dataset.armed = '1';
+      b.textContent = 'Click again to confirm reset';
+      setTimeout(function () { if (b.dataset.armed) { delete b.dataset.armed; b.textContent = 'Reset demo data'; } }, 5000);
+      return;
+    }
+    delete b.dataset.armed;
+    b.textContent = 'Reset demo data';
     state = defaultState();
     working = {};
     lastResult = null;
@@ -911,6 +925,8 @@ if (typeof module !== 'undefined' && module.exports) {
         var room = sorted[+p[0]];
         var real = state.rooms.find(function (x) { return x.num === room.num; });
         real[p[1]] = inp.value;
+        // A stayover is occupied by definition — keep Status in sync.
+        if (p[1] === 'stayco' && inp.value === 'Stay') real.status = 'OCC';
         save(); renderRooms();
       });
     });
