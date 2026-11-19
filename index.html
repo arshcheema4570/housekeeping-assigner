@@ -69,7 +69,7 @@
 </head>
 <body>
 <header>
-  <h1>Comfort Inn Prince Albert — Housekeeping Room Assignment (CN350)</h1>
+  <h1>Housekeeping Room Assignment</h1>
   <p>Offline · floor rotation · seniority rules · 14-checkout / 16-room caps</p>
 </header>
 <nav class="noprint">
@@ -158,6 +158,12 @@
         <input type="text" id="newRoomType" placeholder="Type e.g. NQQ1" size="10">
         <button class="btn ghost" id="btnAddRoom">Add room</button>
       </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn ghost" id="btnBackup">Download backup (JSON)</button>
+        <button class="btn ghost" id="btnRestore">Restore from backup…</button>
+        <input type="file" id="backupIn" accept=".json,application/json" style="display:none">
+      </div>
+      <p class="mut">Backup saves everything — rooms, staff, history and the last assignment — to one file. Restore replaces everything with the file's contents. Keep a copy somewhere safe: if this browser's data is cleared, the backup is the only way back.</p>
       <p class="mut">Type codes: <span class="kbd">NQQ5</span> main 2-queen · <span class="kbd">NQQ1</span> upper 2-queen · <span class="kbd">NQ1</span> upper 1-queen · <span class="kbd">NQ5</span> main 1-queen · <span class="kbd">NK5</span> main king · <span class="kbd">NHQ1</span> main 1-queen accessible. Clean rooms are skipped; Stay = stayover; anything else dirty = checkout clean.</p>
     </div>
   </section>
@@ -167,7 +173,7 @@
 
 <script>
 
-/* Comfort Inn Prince Albert (CN350) — Housekeeping Room Assignment Engine
+/* Housekeeping Room Assignment Engine
  * Pure logic, no DOM. Runs in Node and in the browser.
  * Rules implemented:
  *  R1  Floor rotation: nobody repeats yesterday's floor zone (F1/F2/Split).
@@ -528,6 +534,10 @@ if (typeof module !== 'undefined' && module.exports) {
   var LS = 'hk_assign_pub_v1';
 
   /* ---------- default data (parsed from the 10/30/2026 reports) ---------- */
+  function todayStr() {
+    var d = new Date();
+    return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+  }
   var TYPES = {102:'NQQ5',103:'NQ5',104:'NQ5',105:'NK5',106:'NQ5',107:'NHQ1',108:'NQ5',109:'NQQ5',110:'NQ5',111:'NQQ5',112:'NQ5',115:'NQ5',116:'NQQ5',117:'NQ5',118:'NQ5',119:'NK5',120:'NK5',121:'NQ5',122:'NQQ5',123:'NQQ5',124:'NQQ5',125:'NQQ5',126:'NK5',127:'NQQ5',128:'NQQ5',129:'NK5',130:'NK5',131:'NQ5',132:'NQ5',202:'NQ1',203:'NQ1',204:'NQ1',205:'NQQ1',206:'NQQ1',207:'NQ1',208:'NQ1',209:'NQQ1',210:'NQQ1',211:'NQQ1',212:'NQQ1',215:'NQQ1',216:'NQQ1',217:'NQQ1',218:'NQQ1',219:'NQQ1',221:'NQQ1',222:'NQQ1',223:'NQQ1',224:'NQ1',225:'NQ1',226:'NQ1',227:'NQQ1',228:'NQ1',229:'NQQ1',230:'NQ1',231:'NQQ1',232:'NQQ1',233:'NQ1',234:'NQ1',235:'NQ1',236:'NQ1'};
   var CO = [102,103,104,105,109,110,111,112,116,118,119,120,121,122,123,125,126,128,129,130,131,132,202,203,204,205,207,208,210,211,212,215,216,217,218,221,223,224,225,226,227,228,229,230,232,235,236];
   var STAY = [107,108,115,117,124,206,209,219,231,233,234];
@@ -549,7 +559,7 @@ if (typeof module !== 'undefined' && module.exports) {
       staff: DEFAULT_SENIORITY.map(function (n) { return { name: n }; }),
       history: {},
       rooms: defaultRooms(),
-      bizDate: '11/01/2026'
+      bizDate: todayStr()
     };
   }
 
@@ -618,7 +628,28 @@ if (typeof module !== 'undefined' && module.exports) {
     state.lastResult = lastResult; // survive a reload (print/CSV keep working)
     save();
     renderResult(res);
+    autoSaveHistory(res, state.bizDate);
   });
+
+  // Save today's assignment into History, once per date — so rotation works
+  // tomorrow even if nobody presses the manual button. Running Auto-Assign
+  // twice on the same day does NOT shift history twice.
+  function saveIntoHistory(res, date) {
+    var saved = 0, skipped = 0;
+    res.assignments.forEach(function (a) {
+      var h = state.history[a.name] || (state.history[a.name] = { d3: {}, d2: {}, d1: {} });
+      if (h.d1 && h.d1.date === date) { skipped++; return; }
+      h.d3 = h.d2; h.d2 = h.d1;
+      h.d1 = { floor: a.zone, rooms: a.total, co: a.checkouts, date: date };
+      saved++;
+    });
+    return { saved: saved, skipped: skipped };
+  }
+  function autoSaveHistory(res, date) {
+    var r = saveIntoHistory(res, date);
+    if (r.saved) { save(); renderHistory(); renderWorking(); }
+    return r;
+  }
 
   function renderResult(res) {
     var el = document.getElementById('assignOut');
@@ -651,13 +682,9 @@ if (typeof module !== 'undefined' && module.exports) {
 
   document.getElementById('btnSaveHist').addEventListener('click', function () {
     if (!lastResult) { alert('Run Auto-Assign first.'); return; }
-    lastResult.res.assignments.forEach(function (a) {
-      var h = state.history[a.name] || (state.history[a.name] = { d3: {}, d2: {}, d1: {} });
-      h.d3 = h.d2; h.d2 = h.d1;
-      h.d1 = { floor: a.zone, rooms: a.total, co: a.checkouts, date: lastResult.date };
-    });
+    var r = saveIntoHistory(lastResult.res, lastResult.date);
     save(); renderHistory(); renderWorking();
-    alert('Saved into History as yesterday (' + lastResult.date + ').');
+    alert(r.saved ? ('Saved ' + r.saved + ' into History as yesterday (' + lastResult.date + ').') : ('Already saved for ' + lastResult.date + ' — nothing changed.'));
   });
 
   document.getElementById('btnPrint').addEventListener('click', function () {
@@ -666,7 +693,7 @@ if (typeof module !== 'undefined' && module.exports) {
     var html = '';
     lastResult.res.assignments.forEach(function (a) {
       if (!a.rooms.length) return; // no blank sheet for an empty housekeeper
-      html += '<div class="sheet"><h2>Comfort Inn Prince Albert (CN350) — Housekeeping Assignment</h2>' +
+      html += '<div class="sheet"><h2>Housekeeping Assignment</h2>' +
         '<p>Date: ' + esc(lastResult.date) + ' &nbsp;·&nbsp; Housekeeper: <b>' + esc(a.name) + '</b> &nbsp;·&nbsp; Zone: ' + floorLabel(a.zone) +
         ' &nbsp;·&nbsp; ' + a.checkouts + ' checkouts / ' + a.stays + ' stayovers / ' + a.doubles + ' double-beds</p>' +
         '<table><tr><th>Room</th><th>Type</th><th>Beds</th><th>Status</th><th>C/O–Stay</th><th>Linen &#10003;</th><th>Towels &#10003;</th><th>Remarks</th></tr>';
@@ -946,8 +973,43 @@ if (typeof module !== 'undefined' && module.exports) {
     save(); renderRooms();
   });
 
+  /* ---------- backup / restore (full state as one JSON file) ---------- */
+  document.getElementById('btnBackup').addEventListener('click', function () {
+    var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'housekeeping-backup-' + (state.bizDate || todayStr()).replace(/\//g, '-') + '.json';
+    a.click();
+  });
+  document.getElementById('btnRestore').addEventListener('click', function () {
+    document.getElementById('backupIn').click();
+  });
+  document.getElementById('backupIn').addEventListener('change', function (ev) {
+    var f = ev.target.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      var parsed = null;
+      try { parsed = JSON.parse(rd.result); } catch (e) { parsed = null; }
+      if (!parsed || !Array.isArray(parsed.staff) || !Array.isArray(parsed.rooms)) {
+        alert('That file is not a housekeeping backup (it needs staff and rooms). Nothing was changed.');
+        return;
+      }
+      state = parsed;
+      if (!state.history) state.history = {};
+      working = state.working || {};
+      lastResult = state.lastResult || null;
+      document.getElementById('bizDate').value = state.bizDate || todayStr();
+      save(); renderWorking(); renderStaff(); renderHistory(); renderRooms();
+      if (lastResult && lastResult.res) renderResult(lastResult.res);
+      document.getElementById('assignOut').innerHTML = '<div class="okline">Backup restored: ' + state.rooms.length + ' rooms, ' + state.staff.length + ' staff.</div>';
+    };
+    rd.readAsText(f);
+    ev.target.value = '';
+  });
+
   /* ---------- init ---------- */
-  document.getElementById('bizDate').value = state.bizDate || '11/01/2026';
+  document.getElementById('bizDate').value = state.bizDate || todayStr();
   document.getElementById('bizDate').addEventListener('change', function () { state.bizDate = document.getElementById('bizDate').value; save(); });
   renderWorking(); renderStaff(); renderHistory(); renderRooms();
   if (state.lastResult && state.lastResult.res) { lastResult = state.lastResult; renderResult(lastResult.res); }
