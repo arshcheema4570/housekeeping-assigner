@@ -577,6 +577,24 @@ if (typeof module !== 'undefined' && module.exports) {
     else if (!r.status) r.status = 'VAC';
   });
   save();
+
+  // Business date follows the calendar: if the saved date is in the past,
+  // roll it forward to today — on load, and whenever the tab comes back
+  // into view. A future date (planned ahead) is left alone.
+  function parseBizDate(s) {
+    var m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? new Date(+m[3], +m[1] - 1, +m[2]) : null;
+  }
+  function rollDateForward() {
+    var saved = parseBizDate(state.bizDate);
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (!saved || saved < today) { state.bizDate = todayStr(); save(); }
+  }
+  rollDateForward();
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { rollDateForward(); document.getElementById('bizDate').value = state.bizDate; }
+  });
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function floorLabel(z) { return z === 'F1' ? 'Floor 1 (Main)' : z === 'F2' ? 'Floor 2 (Upper)' : z === 'Split' ? 'Split' : '—'; }
 
