@@ -52,6 +52,19 @@
     .sheet table { font-size:11px; }
     .sheet td, .sheet th { padding:4px 6px; }
   }
+  /* narrow phones: single-column cards, tables scroll inside their card */
+  @media (max-width: 640px) {
+    header { padding:10px 14px; }
+    header h1 { font-size:15px; }
+    nav { padding:8px 10px; top:54px; }
+    nav button { padding:7px 10px; font-size:12px; }
+    main { padding:12px; }
+    .hkgrid { grid-template-columns:1fr; }
+    .card { overflow-x:auto; }
+    table { font-size:12px; }
+    th, td { padding:4px 6px; }
+    .btn { padding:9px 12px; }
+  }
 </style>
 </head>
 <body>
@@ -559,6 +572,7 @@ if (typeof module !== 'undefined' && module.exports) {
 
   /* ---------- today tab ---------- */
   var working = {}; // name -> {on, prev}
+  if (state.working) working = state.working; // survive a reload
   function renderWorking() {
     var el = document.getElementById('workingList');
     var html = '<table><tr><th>Working</th><th>Housekeeper</th><th>Yesterday\'s floor</th></tr>';
@@ -575,10 +589,10 @@ if (typeof module !== 'undefined' && module.exports) {
     });
     el.innerHTML = html + '</table>';
     el.querySelectorAll('[data-w]').forEach(function (cb) {
-      cb.addEventListener('change', function () { working[cb.dataset.w].on = cb.checked; });
+      cb.addEventListener('change', function () { working[cb.dataset.w].on = cb.checked; state.working = working; save(); });
     });
     el.querySelectorAll('[data-p]').forEach(function (sel) {
-      sel.addEventListener('change', function () { working[sel.dataset.p].prev = sel.value; });
+      sel.addEventListener('change', function () { working[sel.dataset.p].prev = sel.value; state.working = working; save(); });
     });
   }
 
@@ -591,6 +605,7 @@ if (typeof module !== 'undefined' && module.exports) {
     state.bizDate = document.getElementById('bizDate').value;
     var res = assignRooms({ rooms: state.rooms, working: names, seniority: state.staff.map(function (s) { return s.name; }), prevFloor: prev });
     lastResult = { res: res, date: state.bizDate };
+    state.lastResult = lastResult; // survive a reload (print/CSV keep working)
     save();
     renderResult(res);
   });
@@ -602,8 +617,10 @@ if (typeof module !== 'undefined' && module.exports) {
     if (!res.warnings.length) html += '<div class="okline">All rules satisfied — rotation respected, caps held (' + res.totals.checkouts + ' checkouts, ' + res.totals.stays + ' stayovers, ' + res.totals.clean + ' clean skipped).</div>';
     html += '<div class="hkgrid">';
     res.assignments.forEach(function (a) {
+      var meta = a.total === 0 ? 'No rooms assigned' :
+        floorLabel(a.zone) + ' · ' + a.checkouts + ' C/O · ' + a.stays + ' stay · ' + a.doubles + ' double-beds · ' + a.total + ' rooms';
       html += '<div class="hkcard"><h3>' + esc(a.name) + '</h3>' +
-        '<div class="meta">' + floorLabel(a.zone) + ' · ' + a.checkouts + ' C/O · ' + a.stays + ' stay · ' + a.doubles + ' double-beds · ' + a.total + ' rooms</div>' +
+        '<div class="meta">' + meta + '</div>' +
         '<table><tr><th>Room</th><th>Type</th><th>Beds</th><th>Job</th></tr>';
       a.rooms.forEach(function (r) {
         html += '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.beds) + '</td>' +
@@ -638,6 +655,7 @@ if (typeof module !== 'undefined' && module.exports) {
     var pa = document.getElementById('printArea');
     var html = '';
     lastResult.res.assignments.forEach(function (a) {
+      if (!a.rooms.length) return; // no blank sheet for an empty housekeeper
       html += '<div class="sheet"><h2>Comfort Inn Prince Albert (CN350) — Housekeeping Assignment</h2>' +
         '<p>Date: ' + esc(lastResult.date) + ' &nbsp;·&nbsp; Housekeeper: <b>' + esc(a.name) + '</b> &nbsp;·&nbsp; Zone: ' + floorLabel(a.zone) +
         ' &nbsp;·&nbsp; ' + a.checkouts + ' checkouts / ' + a.stays + ' stayovers / ' + a.doubles + ' double-beds</p>' +
@@ -692,12 +710,36 @@ if (typeof module !== 'undefined' && module.exports) {
     el.querySelectorAll('[data-rn]').forEach(function (b) {
       b.addEventListener('click', function () {
         var i = +b.dataset.rn, old = state.staff[i].name;
-        var v = prompt('Name for ' + old + ':', /^Staff \d+$/.test(old) ? '' : old);
-        if (v == null) return;
-        v = v.trim(); if (!v || v === old) return;
-        state.staff[i].name = v;
-        if (state.history[old]) { state.history[v] = state.history[old]; delete state.history[old]; }
-        save(); renderStaff(); renderWorking(); renderHistory();
+        if (b.dataset.editing) return; // second click on this button = Save
+        b.dataset.editing = '1';
+        var row = b.closest('.staffrow');
+        var nm = row.querySelector('.nm');
+        var inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = /^Staff \d+$/.test(old) ? '' : old;
+        inp.placeholder = old;
+        inp.style.width = '100%';
+        inp.setAttribute('aria-label', 'Name for ' + old);
+        nm.textContent = ''; nm.appendChild(inp); inp.focus(); inp.select();
+        b.textContent = 'Save';
+        var done = false;
+        function commit() {
+          if (done) return; done = true;
+          var v = inp.value.trim();
+          if (v && v !== old) {
+            state.staff[i].name = v;
+            if (state.history[old]) { state.history[v] = state.history[old]; delete state.history[old]; }
+            if (working[old]) { working[v] = working[old]; delete working[old]; }
+            state.working = working;
+          }
+          save(); renderStaff(); renderWorking(); renderHistory();
+        }
+        function cancel() { if (done) return; done = true; renderStaff(); }
+        b.addEventListener('click', commit, { once: true });
+        inp.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+          if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+        });
       });
     });
     el.querySelectorAll('[data-rm]').forEach(function (b) {
@@ -777,16 +819,35 @@ if (typeof module !== 'undefined' && module.exports) {
     });
     document.getElementById('parseOut').innerHTML =
       '<div class="okline">Parsed <b>' + parsed.rooms.length + '</b> rooms — ' + kinds.checkout + ' checkouts, ' + kinds.stay + ' stayovers, ' + kinds.clean + ' clean.' +
-      (parsed.sections.length ? ' Sections found: ' + parsed.sections.map(function (s) { return esc(s.hk) + ' (' + s.rooms.length + ' rms, ' + s.co + ' C/O)'; }).join('; ') + '.' : '') + '</div>';
+      (parsed.sections.length ? ' Sections found: ' + parsed.sections.map(function (s) { return esc(s.hk) + ' (' + s.rooms.length + ' rms, ' + s.co + ' C/O)'; }).join('; ') + '.' : '') +
+      '<br><span class="mut">Load into Rooms merges: rooms in this report update the inventory, new rooms are added, rooms not listed are kept — nothing is deleted.</span></div>';
     document.getElementById('btnLoadRooms').disabled = !parsed.rooms.length;
     document.getElementById('btnLoadHist').disabled = !parsed.sections.length;
   });
   document.getElementById('btnLoadRooms').addEventListener('click', function () {
     if (!parsed) return;
-    state.rooms = parsed.rooms.map(function (r) { return { num: r.num, type: r.type, status: r.status, condition: r.condition, stayco: r.stayco }; });
+    // MERGE, never replace: a departure list only names the checkouts — rooms
+    // not in the report (stayovers, clean, unlisted) must survive untouched,
+    // with their type and bed data intact. Only overwrite a field the parse
+    // actually supplies (a departure list has no type/status).
+    var updated = 0, added = 0;
+    parsed.rooms.forEach(function (r) {
+      var ex = state.rooms.find(function (x) { return x.num === r.num; });
+      if (ex) {
+        if (r.type) ex.type = r.type;
+        if (r.status) ex.status = r.status;
+        ex.condition = r.condition;
+        ex.stayco = r.stayco;
+        updated++;
+      } else {
+        state.rooms.push({ num: r.num, type: r.type || 'NQ5', status: r.status || 'VAC', condition: r.condition, stayco: r.stayco });
+        added++;
+      }
+    });
     state.bizDate = document.getElementById('bizDate').value;
     save(); renderRooms();
-    alert(state.rooms.length + ' rooms loaded.');
+    alert(updated + ' room(s) updated, ' + added + ' new room(s) added. ' +
+      state.rooms.length + ' rooms total — rooms not in this report were kept, nothing was deleted.');
   });
   document.getElementById('btnLoadHist').addEventListener('click', function () {
     if (!parsed) return;
@@ -850,11 +911,13 @@ if (typeof module !== 'undefined' && module.exports) {
 
   /* ---------- init ---------- */
   document.getElementById('bizDate').value = state.bizDate || '11/01/2026';
+  document.getElementById('bizDate').addEventListener('change', function () { state.bizDate = document.getElementById('bizDate').value; save(); });
   renderWorking(); renderStaff(); renderHistory(); renderRooms();
+  if (state.lastResult && state.lastResult.res) { lastResult = state.lastResult; renderResult(lastResult.res); }
 })();
 </script>
 <script>
-if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('./sw.js').catch(function () {}); }); }
+if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('./sw.js').catch(function () { var p = document.querySelector('header p'); if (p && p.textContent.indexOf('offline install unavailable') < 0) p.textContent += ' · offline install unavailable'; }); }); }
 </script>
 </body>
 </html>
