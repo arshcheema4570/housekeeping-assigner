@@ -408,7 +408,20 @@ function parseText(text, mode, bizDate) {
     !/^\s*\d{3}\b/.test(ln);
 
   if (mode === 'assignment') {
+    // Native report rows are tab/space separated with no pipes, and PDF
+    // extraction flattens the whole report onto one line. Split any line
+    // holding 2+ "NNN TYPE" row starts back into individual rows first.
+    const rowStart = /(\d{3})\s+(NHQ1|N[A-Z]*Q{0,2}[15])\b/g;
+    const expanded = [];
     for (const raw of lines) {
+      const starts = Array.from(raw.matchAll(rowStart));
+      if (starts.length > 1) {
+        for (let i = 0; i < starts.length; i++) {
+          expanded.push(raw.slice(starts[i].index, i + 1 < starts.length ? starts[i + 1].index : undefined));
+        }
+      } else expanded.push(raw);
+    }
+    for (const raw of expanded) {
       const ln = raw.trim();
       if (!ln) continue;
       const hm = ln.match(/^#{0,2}\s*([A-Za-z'’\-]+),\s*([A-Za-z'’\-]+)/);
@@ -419,6 +432,25 @@ function parseText(text, mode, bizDate) {
       }
       if (isNoise(ln)) continue;
       if (!/\d{3}/.test(ln)) continue;
+      // Native format: "235  NQ1  Occupied  Occupied  CLEAN DIRTY  Stay Over".
+      // No pipes, so the pipe parse below would see no Service column and
+      // default every room to Dirty checkout. The Service column is the
+      // truth here (Condition shows both CLEAN and DIRTY labels — the
+      // checkmark is lost in text): Check Out -> C/O, Stay Over -> Stay,
+      // None -> Clean (no service needed).
+      const nm = ln.match(/^\|?\s*(\d{3})\s+(NHQ1|N[A-Z]*Q{0,2}[15])\b/);
+      if (nm && /check\s*out|stay\s*over|\bnone\b/i.test(ln)) {
+        const num = nm[1], type = nm[2];
+        const status = /\bvacant\b/i.test(ln) ? 'VAC' : (/\boccupied\b/i.test(ln) ? 'OCC' : '');
+        let condition = 'Dirty', stayco = '';
+        if (/check\s*out/i.test(ln)) stayco = 'C/O';
+        else if (/stay\s*over/i.test(ln)) stayco = 'Stay';
+        else if (/\bnone\b/i.test(ln)) condition = 'Clean';
+        const room = { num, type, status, condition, stayco };
+        rooms.push(room);
+        if (cur) { cur.rooms.push(num); if (/c\/o/i.test(room.stayco)) cur.co++; }
+        continue;
+      }
       const cells = ln.split('|').map((c) => c.trim());
       // Room numbers may sit in the first non-empty cell (rows often start with '|').
       let ri = cells.findIndex((c) => /\b\d{3}\b/.test(c));
