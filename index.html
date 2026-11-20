@@ -42,12 +42,17 @@
   .staffrow .nm { flex:1; font-size:14px; }
   .mut { color:var(--mut); font-size:12px; }
   .kbd { font-family:ui-monospace,monospace; background:#f4f4f5; padding:1px 6px; border-radius:4px; font-size:12px; }
-  /* print sheets */
+  /* print sheets (also the on-screen result format) */
   #printArea { display:none; }
+  .sheet { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .sheet h2 { font-size:16px; margin:0 0 2px; }
+  .sheetname { font-size:15px; font-weight:700; margin:2px 0 6px; }
+  .sheetmeta { font-size:12px; color:var(--mut); margin:0 0 10px; }
+  .sheettotal { font-size:13px; font-weight:700; margin:10px 0 0; }
   @media print {
     header, nav, main, .noprint { display:none !important; }
     #printArea { display:block; }
-    .sheet { page-break-after:always; font-size:12px; }
+    .sheet { page-break-after:always; font-size:12px; border:0; border-radius:0; padding:0; margin:0; }
     .sheet h2 { font-size:16px; margin:0 0 2px; }
     .sheet table { font-size:11px; }
     .sheet td, .sheet th { padding:4px 6px; }
@@ -315,6 +320,7 @@ function assignRooms(opts) {
     return {
       num: String(r.num), type: r.type, floor,
       status: r.status || '', condition: r.condition || 'Dirty', stayco: r.stayco || '',
+      los: r.los, service: r.service,
       beds: info.beds, isDouble: info.isDouble,
     };
   });
@@ -444,24 +450,45 @@ function parseText(text, mode, bizDate) {
       }
       if (isNoise(ln)) continue;
       if (!/\d{3}/.test(ln)) continue;
-      // Native format: "235  NQ1  Occupied  Occupied  CLEAN DIRTY  Stay Over".
-      // No pipes, so the pipe parse below would see no Service column and
-      // default every room to Dirty checkout. The Service column is the
-      // truth here (Condition shows both CLEAN and DIRTY labels — the
-      // checkmark is lost in text): Check Out -> C/O, Stay Over -> Stay,
-      // None -> Clean (no service needed).
+      // Native format: "235  NQ1  Occupied  Occupied  CLEAN DIRTY  Stay Over",
+      // or the printed sheet's rows: "132 NQ5 VAC Dirty C/O 1", "126 NK5 OCC
+      // Dirty Stay Full", "218 NQQ1 VAC Dirty 3". No pipes, so the pipe parse
+      // below would see no Service column and default every room to Dirty
+      // checkout. The Service/Status words are the truth here (Condition
+      // shows both CLEAN and DIRTY labels in copied tables — the checkmark
+      // is lost in text): Check Out -> C/O, Stay Over -> Stay, None -> Clean.
+      // A trailing number is the LOS, "Full" is the Service.
       const nm = ln.match(new RegExp('^\\|?\\s*(\\d{3})\\s+(' + TYPE_ALT + ')\\b'));
-      if (nm && /check\s*out|stay\s*over|\bnone\b/i.test(ln)) {
-        const num = nm[1], type = wordTypeToCode(nm[2], nm[1]);
-        const status = /\bvacant\b/i.test(ln) ? 'VAC' : (/\boccupied\b/i.test(ln) ? 'OCC' : '');
-        let condition = 'Dirty', stayco = '';
-        if (/check\s*out/i.test(ln)) stayco = 'C/O';
-        else if (/stay\s*over/i.test(ln)) stayco = 'Stay';
-        else if (/\bnone\b/i.test(ln)) condition = 'Clean';
-        const room = { num, type, status, condition, stayco };
-        rooms.push(room);
-        if (cur) { cur.rooms.push(num); if (/c\/o/i.test(room.stayco)) cur.co++; }
-        continue;
+      if (nm) {
+        // PDF extraction flattens the whole report onto one line, so a row's
+        // slice can trail into the next page's header/footer ("Total Rooms
+        // 11", "Page 1 of 5", "Shift: 2"). Cut the tail there first, or
+        // those stray numbers would be read as the LOS.
+        const rawTail = ln.slice(nm[0].length);
+        const junkAt = rawTail.search(/total rooms|date\/time of printing|software version|page \d+ of \d+|business date|property code|housekeeping room assignment/i);
+        const tail = junkAt >= 0 ? rawTail.slice(0, junkAt) : rawTail;
+        const tailNoDates = tail.replace(/\d{1,2}\/\d{1,2}\/\d{2,4}/g, ' ');
+        const hasStay = /\bstay\b/i.test(tail);
+        const hasCO = /c\/o/i.test(tail) || /check\s*out/i.test(tail);
+        const hasNone = /\bnone\b/i.test(tail);
+        const hasClean = /\bclean\b/i.test(tail), hasDirty = /\bdirty\b/i.test(tail);
+        const losM = tailNoDates.match(/\b(\d{1,2})\b/);
+        const hasFull = /\bfull\b/i.test(tail);
+        if (hasStay || hasCO || hasNone || losM || hasFull || hasClean || hasDirty) {
+          const num = nm[1], type = wordTypeToCode(nm[2], nm[1]);
+          const status = /\bvacant\b/i.test(tail) ? 'VAC' : (/\boccupied\b/i.test(tail) ? 'OCC' : (/\bvac\b/i.test(tail) ? 'VAC' : (/\bocc\b/i.test(tail) ? 'OCC' : '')));
+          let condition = 'Dirty', stayco = '';
+          if (hasStay) stayco = 'Stay';
+          else if (hasCO) stayco = 'C/O';
+          else if (hasNone) condition = 'Clean';
+          else if (hasClean && !hasDirty) condition = 'Clean';
+          const room = { num, type, status, condition, stayco };
+          if (losM) room.los = +losM[1];
+          if (hasFull) room.service = 'Full';
+          rooms.push(room);
+          if (cur) { cur.rooms.push(num); if (/c\/o/i.test(room.stayco)) cur.co++; }
+          continue;
+        }
       }
       const cells = ln.split('|').map((c) => c.trim());
       // Room numbers may sit in the first non-empty cell (rows often start with '|').
@@ -472,16 +499,20 @@ function parseText(text, mode, bizDate) {
       const stats = ((cells[ri + 2] || '').match(/\bVAC\b|\bOCC\b/gi) || []);
       const conds = (cells[ri + 3] || '').match(/\bClean\b|\bDirty\b/gi) || [];
       const scs = (cells[ri + 4] || '').match(/\bStay\b|\bC\/O\b/gi) || [];
+      const extras = (cells[ri + 5] || '').match(/\b\d{1,2}\b|\bFull\b/gi) || [];
       const n = Math.max(nums.length, 1);
       for (let i = 0; i < n; i++) {
         const num = nums[i];
         if (!num) continue;
+        const ex = extras[i] || extras[0] || '';
         const room = {
           num,
           type: types[i] || types[0] || '',
           status: (stats[i] || stats[0] || '').toUpperCase(),
           condition: (conds[i] || conds[0] || 'Dirty'),
           stayco: (scs[i] || scs[0] || ''),
+          los: /^\d{1,2}$/.test(ex) ? +ex : undefined,
+          service: /^full$/i.test(ex) ? 'Full' : undefined,
         };
         rooms.push(room);
         if (cur) { cur.rooms.push(num); if (/c\/o/i.test(room.stayco)) cur.co++; }
@@ -579,6 +610,7 @@ if (typeof module !== 'undefined' && module.exports) {
 (function () {
   'use strict';
   var LS = 'hk_assign_pub_v1';
+  var PROP_CODE = ''; // printed on assignment sheets; the public build blanks it
 
   /* ---------- default data (parsed from the 10/30/2026 reports) ---------- */
   function todayStr() {
@@ -716,32 +748,52 @@ if (typeof module !== 'undefined' && module.exports) {
     return r;
   }
 
+  /* Assignment sheets in the hotel's printed format: one sheet per
+   * housekeeper — title, name, Business Date / Property Code, room table
+   * (Room, Type, Status, Condition, Stay/C/O, LOS, Service), Total Rooms —
+   * plus a sheet for clean rooms (no work) and one for overflow. The same
+   * markup is shown on screen and printed. */
+  function sheetRowsHtml(rooms) {
+    return rooms.map(function (r) {
+      return '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.status) + '</td><td>' + esc(r.condition) + '</td>' +
+        '<td>' + (r.kind === 'checkout' ? 'C/O' : (r.kind === 'stay' ? 'Stay' : '')) + '</td>' +
+        '<td>' + (r.los !== undefined && r.los !== null ? r.los : '') + '</td><td>' + esc(r.service || '') + '</td></tr>';
+    }).join('');
+  }
+  function sheetHtml(name, meta, rooms, date) {
+    return '<div class="sheet"><h2>Housekeeping Room Assignment</h2>' +
+      (name ? '<div class="sheetname">' + esc(name) + '</div>' : '') +
+      '<p class="sheetmeta">Business Date: ' + esc(date) + (PROP_CODE ? ' &nbsp;·&nbsp; Property Code: ' + esc(PROP_CODE) : '') + (meta ? ' &nbsp;·&nbsp; ' + meta : '') + '</p>' +
+      '<table><tr><th>Room</th><th>Type</th><th>Status</th><th>Condition</th><th>Stay/C/O</th><th>LOS</th><th>Service</th></tr>' +
+      sheetRowsHtml(rooms) +
+      '</table><p class="sheettotal">Total Rooms ' + rooms.length + '</p></div>';
+  }
+  function sheetsHtml(res, date) {
+    var html = '';
+    res.assignments.forEach(function (a) {
+      if (!a.rooms.length) return; // no blank sheet for an empty housekeeper
+      var meta = floorLabel(a.zone) + ' · ' + a.checkouts + ' C/O · ' + a.stays + ' stay · ' + a.doubles + ' double-beds';
+      html += sheetHtml(a.name, meta, a.rooms, date);
+    });
+    if (res.clean.length) {
+      html += sheetHtml('Clean — no work', '', res.clean, date);
+    }
+    if (res.overflow.length) {
+      html += '<div class="sheet"><h2>Blocked for tomorrow / call another housekeeper</h2>' +
+        '<p class="sheetmeta">Business Date: ' + esc(date) + (PROP_CODE ? ' &nbsp;·&nbsp; Property Code: ' + esc(PROP_CODE) : '') + '</p>' +
+        '<table><tr><th>Room</th><th>Type</th><th>Status</th><th>Condition</th><th>Stay/C/O</th><th>LOS</th><th>Service</th></tr>' +
+        sheetRowsHtml(res.overflow) +
+        '</table><p class="sheettotal">Total Rooms ' + res.overflow.length + '</p></div>';
+    }
+    return html;
+  }
+
   function renderResult(res) {
     var el = document.getElementById('assignOut');
     var html = '';
     res.warnings.forEach(function (w) { html += '<div class="warn">' + esc(w) + '</div>'; });
     if (!res.warnings.length) html += '<div class="okline">All rules satisfied — rotation respected, caps held (' + res.totals.checkouts + ' checkouts, ' + res.totals.stays + ' stayovers, ' + res.totals.clean + ' clean skipped).</div>';
-    html += '<div class="hkgrid">';
-    res.assignments.forEach(function (a) {
-      var meta = a.total === 0 ? 'No rooms assigned' :
-        floorLabel(a.zone) + ' · ' + a.checkouts + ' C/O · ' + a.stays + ' stay · ' + a.doubles + ' double-beds · ' + a.total + ' rooms';
-      html += '<div class="hkcard"><h3>' + esc(a.name) + '</h3>' +
-        '<div class="meta">' + meta + '</div>' +
-        '<table><tr><th>Room</th><th>Type</th><th>Beds</th><th>Job</th></tr>';
-      a.rooms.forEach(function (r) {
-        html += '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.beds) + '</td>' +
-          '<td><span class="pill ' + (r.kind === 'checkout' ? 'co' : 'stay') + '">' + (r.kind === 'checkout' ? 'C/O' : 'Stay') + '</span></td></tr>';
-      });
-      html += '</table></div>';
-    });
-    html += '</div>';
-    if (res.overflow.length) {
-      html += '<div class="card" style="margin-top:12px"><h2>Blocked for tomorrow / call another housekeeper (' + res.overflow.length + ')</h2><table><tr><th>Room</th><th>Type</th><th>Job</th></tr>' +
-        res.overflow.map(function (r) { return '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + r.kind + '</td></tr>'; }).join('') + '</table></div>';
-    }
-    if (res.clean.length) {
-      html += '<p class="mut">Clean / no work: ' + res.clean.map(function (r) { return r.num; }).join(', ') + '</p>';
-    }
+    html += sheetsHtml(res, (lastResult && lastResult.date) || state.bizDate);
     el.innerHTML = html;
   }
 
@@ -754,34 +806,16 @@ if (typeof module !== 'undefined' && module.exports) {
 
   document.getElementById('btnPrint').addEventListener('click', function () {
     if (!lastResult) { alert('Run Auto-Assign first.'); return; }
-    var pa = document.getElementById('printArea');
-    var html = '';
-    lastResult.res.assignments.forEach(function (a) {
-      if (!a.rooms.length) return; // no blank sheet for an empty housekeeper
-      html += '<div class="sheet"><h2>Housekeeping Assignment</h2>' +
-        '<p>Date: ' + esc(lastResult.date) + ' &nbsp;·&nbsp; Housekeeper: <b>' + esc(a.name) + '</b> &nbsp;·&nbsp; Zone: ' + floorLabel(a.zone) +
-        ' &nbsp;·&nbsp; ' + a.checkouts + ' checkouts / ' + a.stays + ' stayovers / ' + a.doubles + ' double-beds</p>' +
-        '<table><tr><th>Room</th><th>Type</th><th>Beds</th><th>Status</th><th>C/O–Stay</th><th>Linen &#10003;</th><th>Towels &#10003;</th><th>Remarks</th></tr>';
-      a.rooms.forEach(function (r) {
-        html += '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.beds) + '</td><td>' + esc(r.status) + '</td>' +
-          '<td>' + (r.kind === 'checkout' ? 'C/O' : 'Stay') + '</td><td></td><td></td><td></td></tr>';
-      });
-      html += '</table><p>Supervisor signature: ____________________ &nbsp;&nbsp; Housekeeper signature: ____________________</p></div>';
-    });
-    if (lastResult.res.overflow.length) {
-      html += '<div class="sheet"><h2>Blocked for tomorrow / call another housekeeper</h2><table><tr><th>Room</th><th>Type</th><th>Job</th></tr>' +
-        lastResult.res.overflow.map(function (r) { return '<tr><td>' + esc(r.num) + '</td><td>' + esc(r.type) + '</td><td>' + r.kind + '</td></tr>'; }).join('') + '</table></div>';
-    }
-    pa.innerHTML = html;
+    document.getElementById('printArea').innerHTML = sheetsHtml(lastResult.res, lastResult.date);
     window.print();
   });
 
   document.getElementById('btnCsv').addEventListener('click', function () {
     if (!lastResult) { alert('Run Auto-Assign first.'); return; }
-    var rows = [['Date', 'Housekeeper', 'Zone', 'Room', 'Type', 'Beds', 'Status', 'Job']];
+    var rows = [['Date', 'Housekeeper', 'Zone', 'Room', 'Type', 'Beds', 'Status', 'Job', 'LOS', 'Service']];
     lastResult.res.assignments.forEach(function (a) {
       a.rooms.forEach(function (r) {
-        rows.push([lastResult.date, a.name, floorLabel(a.zone), r.num, r.type, r.beds, r.status, r.kind]);
+        rows.push([lastResult.date, a.name, floorLabel(a.zone), r.num, r.type, r.beds, r.status, r.kind, (r.los !== undefined && r.los !== null ? r.los : ''), (r.service || '')]);
       });
     });
     var csv = rows.map(function (r) { return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
@@ -965,9 +999,11 @@ if (typeof module !== 'undefined' && module.exports) {
         if (r.status) ex.status = r.status;
         ex.condition = r.condition;
         ex.stayco = r.stayco;
+        if (r.los !== undefined) ex.los = r.los;
+        if (r.service) ex.service = r.service;
         updated++;
       } else {
-        state.rooms.push({ num: r.num, type: r.type || 'NQ5', status: r.status || (roomKind(r) === 'stay' ? 'OCC' : 'VAC'), condition: r.condition, stayco: r.stayco });
+        state.rooms.push({ num: r.num, type: r.type || 'NQ5', status: r.status || (roomKind(r) === 'stay' ? 'OCC' : 'VAC'), condition: r.condition, stayco: r.stayco, los: r.los, service: r.service });
         added++;
       }
     });
