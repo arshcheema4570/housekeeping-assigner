@@ -201,6 +201,18 @@ function roomTypeInfo(type) {
   return { floor, beds, isDouble };
 }
 
+/* Plain-word bed types (QUEEN/KING) as printed on some PMS reports map to the
+ * N-code for the room's floor: 1xx -> main floor (…5), 2xx -> upper (…1). */
+const TYPE_ALT = 'NHQ1|N[A-Z]*Q{0,2}[15]|QUEEN|KING';
+function wordTypeToCode(word, num) {
+  const n = parseInt(num, 10);
+  const upper = n >= 200 && n < 300;
+  const w = String(word || '').toUpperCase();
+  if (w === 'KING') return upper ? 'NK1' : 'NK5';
+  if (w === 'QUEEN') return upper ? 'NQ1' : 'NQ5';
+  return word;
+}
+
 function floorOfRoom(room) {
   const n = parseInt(room.num, 10);
   if (n >= 100 && n < 200) return 1;
@@ -411,7 +423,7 @@ function parseText(text, mode, bizDate) {
     // Native report rows are tab/space separated with no pipes, and PDF
     // extraction flattens the whole report onto one line. Split any line
     // holding 2+ "NNN TYPE" row starts back into individual rows first.
-    const rowStart = /(\d{3})\s+(NHQ1|N[A-Z]*Q{0,2}[15])\b/g;
+    const rowStart = new RegExp('(\\d{3})\\s+(' + TYPE_ALT + ')\\b', 'g');
     const expanded = [];
     for (const raw of lines) {
       const starts = Array.from(raw.matchAll(rowStart));
@@ -438,9 +450,9 @@ function parseText(text, mode, bizDate) {
       // truth here (Condition shows both CLEAN and DIRTY labels — the
       // checkmark is lost in text): Check Out -> C/O, Stay Over -> Stay,
       // None -> Clean (no service needed).
-      const nm = ln.match(/^\|?\s*(\d{3})\s+(NHQ1|N[A-Z]*Q{0,2}[15])\b/);
+      const nm = ln.match(new RegExp('^\\|?\\s*(\\d{3})\\s+(' + TYPE_ALT + ')\\b'));
       if (nm && /check\s*out|stay\s*over|\bnone\b/i.test(ln)) {
-        const num = nm[1], type = nm[2];
+        const num = nm[1], type = wordTypeToCode(nm[2], nm[1]);
         const status = /\bvacant\b/i.test(ln) ? 'VAC' : (/\boccupied\b/i.test(ln) ? 'OCC' : '');
         let condition = 'Dirty', stayco = '';
         if (/check\s*out/i.test(ln)) stayco = 'C/O';
@@ -481,6 +493,9 @@ function parseText(text, mode, bizDate) {
       if (!ln || /account|guest name|arrival|departure|date\/time|total departures|page \d/i.test(ln)) continue;
       const m = ln.match(/(\d{3})\s*$/);
       if (m) rooms.push({ num: m[1], type: '', status: '', condition: 'Dirty', stayco: 'C/O' });
+      // Room-first departure rows: "201 QUEEN 11/20/2026 Checkout".
+      const rf = ln.match(new RegExp('^\\s*(\\d{3})\\s+(' + TYPE_ALT + ')\\b'));
+      if (rf) rooms.push({ num: rf[1], type: wordTypeToCode(rf[2], rf[1]), status: '', condition: 'Dirty', stayco: 'C/O' });
     }
   } else if (mode === 'inhouse') {
     const bd = String(bizDate || '').trim();
