@@ -559,20 +559,46 @@ async function extractPdfText(arrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);
   const bin = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
   const texts = [];
-  const streamRe = /stream\r?\n([\s\S]*?)endstream/g;
-  let m;
+  // Slice each stream by its declared /Length (the dict sits just before the
+  // "stream" keyword). The old non-greedy capture to "endstream" included
+  // the line break before "endstream", and trimming it could also eat the
+  // zlib stream's own last byte when the Adler-32 checksum ends in 0x0A —
+  // that is exactly why the hotel's page 4 vanished. "endstream" itself
+  // contains "stream", so skip matches preceded by "end".
   const parts = [];
-  while ((m = streamRe.exec(bin)) !== null) {
-    const start = m.index + m[0].indexOf(m[1]);
-    parts.push(bytes.slice(start, start + m[1].length));
+  const kwRe = /stream\r?\n/g;
+  let m;
+  while ((m = kwRe.exec(bin)) !== null) {
+    if (bin.slice(Math.max(0, m.index - 3), m.index) === 'end') continue;
+    const dataStart = m.index + m[0].length;
+    const dictText = bin.slice(Math.max(0, m.index - 300), m.index);
+    const lenMatches = [...dictText.matchAll(/\/Length\s+(\d+)/g)];
+    if (lenMatches.length) {
+      const len = +lenMatches[lenMatches.length - 1][1];
+      parts.push(bytes.slice(dataStart, dataStart + len));
+    } else {
+      const end = bin.indexOf('endstream', dataStart);
+      if (end >= 0) parts.push(bytes.slice(dataStart, end));
+    }
   }
   for (const part of parts) {
     let raw = null;
-    try {
-      const ds = new DecompressionStream('deflate');
-      const s = new Blob([part]).stream().pipeThrough(ds);
-      raw = await new Response(s).arrayBuffer();
-    } catch (e) { /* not flate */ }
+    // DecompressionStream is strict about trailing junk. Slices cut by
+    // declared /Length are exact; only the no-Length fallback (captured to
+    // "endstream") can carry the line break before "endstream", so retry
+    // that one with at most one trailing CR/LF pair stripped.
+    const candidates = [part];
+    let trimmed = part;
+    for (let i = 0; i < 2 && trimmed.length && (trimmed[trimmed.length - 1] === 0x0a || trimmed[trimmed.length - 1] === 0x0d); i++) trimmed = trimmed.slice(0, -1);
+    if (trimmed.length !== part.length) candidates.push(trimmed);
+    for (const cand of candidates) {
+      try {
+        const ds = new DecompressionStream('deflate');
+        const s = new Blob([cand]).stream().pipeThrough(ds);
+        raw = await new Response(s).arrayBuffer();
+        break;
+      } catch (e) { /* try the next candidate, else raw bytes */ }
+    }
     const chunk = raw ? Array.from(new Uint8Array(raw), (b) => String.fromCharCode(b)).join('') : null;
     const src = chunk || Array.from(part, (b) => String.fromCharCode(b)).join('');
     texts.push(src);
@@ -581,7 +607,7 @@ async function extractPdfText(arrayBuffer) {
   const out = [];
   const tjRe = /\((?:[^()\\]|\\.|\\\r?\n)*\)\s*Tj/g;
   let t;
-  while ((t = tjRe.exec(full)) !== null) out.push(unescapePdfStr(t[0].slice(0, t[0].lastIndexOf(')'))));
+  while ((t = tjRe.exec(full)) !== null) out.push(unescapePdfStr(t[0].slice(0, t[0].lastIndexOf(')') + 1)));
   const tjaRe = /\[((?:[^\[\]\\]|\\.|\([^()]*\))*)\]\s*TJ/g;
   while ((t = tjaRe.exec(full)) !== null) {
     const inner = t[1];
@@ -601,7 +627,7 @@ function unescapePdfStr(s) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { assignRooms, parseText, roomTypeInfo, roomKind, normDate, DEFAULT_SENIORITY, MAX_CHECKOUTS, MAX_ROOMS };
+  module.exports = { assignRooms, parseText, roomTypeInfo, roomKind, normDate, extractPdfText, DEFAULT_SENIORITY, MAX_CHECKOUTS, MAX_ROOMS };
 }
 
 
@@ -959,6 +985,7 @@ if (typeof module !== 'undefined' && module.exports) {
     rd.onload = function () {
       if (/\.pdf$/i.test(f.name)) {
         extractPdfText(rd.result).then(function (t) {
+          if (!t) { alert('Could not extract this PDF here — open it, Ctrl+A / Ctrl+C, and paste the text.'); return; }
           document.getElementById('pasteBox').value = t;
         }).catch(function () { alert('Could not extract this PDF here — open it, Ctrl+A / Ctrl+C, and paste the text.'); });
       } else {
